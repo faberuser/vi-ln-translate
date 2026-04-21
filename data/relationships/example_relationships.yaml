@@ -1,37 +1,25 @@
 relationships:
-    - char_a: Zig
-      char_b: Siasha
-      a_calls_self: tôi
-      a_calls_b: cpp
-      context: Làm việc
-      notes: Zig là người làm việc của Siasha
-    - char_a: Siasha
-      char_b: Zig
-      a_calls_self: tôi
-      a_calls_b: anh
+    - char_a: Arata
+      char_b: Yuki
+      a_calls_self: anh
+      a_calls_b: em
       context: Lãng mạn
-      notes: Siasha có tình cảm với Zig, Zig vẫn chưa biết
-    - char_a: Zig
-      char_b: Isana
-      a_calls_self: ta
+      notes: Arata là senpai của Yuki
+    - char_a: Yuki
+      char_b: Arata
+      a_calls_b: anh
+      a_calls_self: em
+      context: Lãng mạn
+      notes: ""
+    - char_a: Demon King
+      char_b: Hero
       a_calls_b: ngươi
+      a_calls_self: ta
       context: Đối địch
       notes: Giọng kiêu ngạo, cổ điển
     - char_a: Hero
       char_b: Demon King
+      a_calls_b: ngươi
       a_calls_self: tôi
-      a_calls_b: ngươi
       context: Đối địch
-      notes: ""
-    - char_a: Master
-      char_b: Disciple
-      a_calls_self: ta
-      a_calls_b: ngươi
-      context: Sư đồ
-      notes: ""
-    - char_a: Disciple
-      char_b: Master
-      a_calls_self: con
-      a_calls_b: thầy
-      context: Sư đồ
       notes: ""
