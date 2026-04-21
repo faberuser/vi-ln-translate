@@ -1,0 +1,25 @@
+entries:
+    - source: Hero
+      target: Dũng sĩ
+      context: Chức danh
+      notes: ""
+    - source: Dark Lord
+      target: Ma Vương
+      context: Phản diện
+      notes: ""
+    - source: Sword Saint
+      target: Kiếm Thánh
+      context: Danh hiệu
+      notes: ""
+    - source: Sage
+      target: Hiền nhân
+      context: Danh hiệu
+      notes: ""
+    - source: Dragon Knight
+      target: Kỵ sĩ Rồng
+      context: Chức danh
+      notes: ""
+    - source: Holy Kingdom
+      target: Vương quốc Thánh
+      context: Địa danh
+      notes: ""

@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# EN→VI Light Novel Translator — configuration
+# Edit this file, then run:  python main.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── API ───────────────────────────────────────────────────────────────────────
+# Leave api_key blank to read from the GEMINI_API_KEY environment variable / .env
+api_key: ""
+model: gemini-3-flash-preview
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+data_dir: data # root data folder
+input_dir: data/input # *.epub files here are translated automatically
+output_dir: data/output # translated EPUBs are written here
+glossaries_dir: data/glossaries # *.yaml / *.json  → merged Glossary
+relationships_dir: data/relationships # *.yaml / *.json  → merged RelationshipMatrix
+prior_volumes_dir: data/prior # *.epub (sorted)  → prior-volume context seed
+
+# ── Translation ───────────────────────────────────────────────────────────────
+batch: true # send chapters in chunks (saves RPD quota)
+batch_size: 3 # chapters per API request when batch: true
+max_tokens: 65536 # max output tokens per request
+context_window: 5 # past translated chapters to include as context (2-5 typical, or ~ for all)
+resume: true # resume from checkpoint after interruption
+
+# Chapter range — set to restrict which chapters are translated
+start_chapter: 0 # 0-based inclusive
+end_chapter: ~ # null/~ = all chapters
+
+# ── Quality evaluation ────────────────────────────────────────────────────────
+evaluate: false # second-pass AI evaluation (costs 1 extra RPD per chapter)
+review_threshold: 75.0 # chapters scoring below this are flagged for human review
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+verbose: false # show DEBUG-level logs

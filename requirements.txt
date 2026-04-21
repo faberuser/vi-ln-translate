@@ -1,0 +1,9 @@
+google-genai
+ebooklib
+PyYAML
+tenacity
+beautifulsoup4
+lxml
+rich
+click
+python-dotenv
