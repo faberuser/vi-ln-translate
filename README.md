@@ -1,4 +1,4 @@
-# Light Novel EN → VI Translator
+# Vibe Coded Light Novel EN → VI Translator
 
 Translate English Light Novel EPUB files into fluent Vietnamese using the **Gemini Flash** API.  
 Just drop EPUBs into `data/input/`, edit `config.yaml`, and run `python main.py`.
