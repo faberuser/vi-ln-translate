@@ -44,7 +44,8 @@ def _find_data_files(directory: Path, globs: tuple) -> List[Path]:
         return found
     for pattern in globs:
         found.extend(directory.glob(pattern))
-    return sorted(set(found))
+    # Skip example template files (prefixed with "example_")
+    return sorted(p for p in set(found) if not p.name.startswith("example_"))
 
 
 def _find_epubs(directory: Path) -> List[Path]:

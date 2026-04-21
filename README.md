@@ -36,7 +36,7 @@ venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 
 # 4. Set your Gemini API key
-copy .env.example .env
+cp .env.example .env
 # edit .env and set:  GEMINI_API_KEY=your_key_here
 ```
 
@@ -57,7 +57,8 @@ data/
 
 1. Drop your `.epub` file(s) into `data/input/`
 2. Edit `config.yaml` if needed (see below)
-3. Run:
+3. Edit `glossaries/*.yaml` or `relationships/*.yaml` if needed (see below)
+4. Run:
 
 ```bash
 python main.py
@@ -85,9 +86,9 @@ prior_volumes_dir: data/prior # *.epub (sorted)  → prior-volume context seed
 
 # ── Translation ───────────────────────────────────────────────────────────────
 batch: true # send chapters in chunks (saves RPD quota)
-batch_size: 5 # chapters per API request
+batch_size: 3 # chapters per API request
 max_tokens: 65536 # max output tokens per request
-context_window: 3 # past translated chapters to include as context (2–5, or ~ for all)
+context_window: 5 # past translated chapters to include as context (2–5, or ~ for all)
 resume: true # resume from checkpoint on next run after interruption
 
 # Chapter range — restrict which chapters are translated
@@ -104,13 +105,77 @@ verbose: false # show DEBUG-level logs
 
 ### Key settings to tune
 
-| Setting                         | Recommendation                                                                     |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `batch_size`                    | Lower (3) if you hit token limits; raise (8) for short chapters                    |
-| `context_window`                | `3`–`5` for ongoing stories; `1`–`2` for standalone; `~` to use all prior chapters |
-| `evaluate`                      | Keep `false` (default) to save RPD; enable for final-pass review                   |
-| `start_chapter` / `end_chapter` | Translate a slice of the volume                                                    |
-| `resume`                        | Keep `true`; set `false` only to force a clean restart                             |
+| Setting          | Recommendation                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------- |
+| `batch_size`     | Lower (2) if you hit token limits; raise (8) for short chapters                    |
+| `context_window` | `2`–`5` for ongoing stories; `1`–`2` for standalone; `~` to use all prior chapters |
+
+Why gemini-3-flash-preview? Flash models reduce thinking which does not beneficial in translation and may increases output token.
+
+---
+
+## Data Files
+
+### Glossary (`data/glossaries/*.yaml`)
+
+> **To activate:** copy the example file and remove the `example_` prefix.
+> Files starting with `example_` are ignored by the translator.
+>
+> ```bash
+> cp data/glossaries/example_glossary.yaml data/glossaries/my_series_glossary.yaml
+> ```
+
+```yaml
+entries:
+    - source: "Sword Saint"
+      target: "Kiếm Thánh"
+      context: "Danh hiệu"
+      notes: ""
+```
+
+Multiple files are merged automatically. All entries are injected into every translation prompt.
+
+### Relationship Matrix (`data/relationships/*.yaml`)
+
+> **To activate:** copy the example file and remove the `example_` prefix.
+> Files starting with `example_` are ignored by the translator.
+>
+> ```bash
+> cp data/relationships/example_relationships.yaml data/relationships/my_series_relationships.yaml
+> ```
+
+```yaml
+relationships:
+    - char_a: "Arata"
+      char_b: "Yuki"
+      a_calls_self: "anh"
+      a_calls_b: "em"
+      context: "Lãng mạn"
+      notes: ""
+```
+
+Tells the model exactly which Vietnamese pronouns each character uses for themselves and others.
+
+### Prior Volumes (`data/prior/*.epub`)
+
+Place previously translated volumes here (sorted by filename). The chapters from the latest volume are seeded as context when translating the next volume—specifically, the last `context_window` chapters (or all chapters if `context_window: ~`).
+
+```
+data/prior/
+├── vol01_vi.epub
+├── vol02_vi.epub
+└── vol03_vi.epub  ← last N chapters seeded when translating vol04
+```
+
+---
+
+## Checkpoint / Resume
+
+Translation progress is saved to `<output>.checkpoint.json` after every chapter (or batch chunk). If a run is interrupted for any reason (rate limit, Ctrl-C, crash), simply re-run `python main.py` — completed chapters are skipped automatically.
+
+The checkpoint file is deleted when a volume finishes successfully.
+
+To restart from scratch: delete the `.checkpoint.json` file manually (or set `resume: false` in `config.yaml`).
 
 ---
 
@@ -170,66 +235,14 @@ The script prints the chapter table, asks which indices to remove, shows a previ
 
 ---
 
-## Data Files
-
-### Glossary (`data/glossaries/*.yaml`)
-
-```yaml
-entries:
-    - source: "Sword Saint"
-      target: "Kiếm Thánh"
-      context: "Danh hiệu"
-      notes: ""
-```
-
-Multiple files are merged automatically. All entries are injected into every translation prompt.
-
-### Relationship Matrix (`data/relationships/*.yaml`)
-
-```yaml
-relationships:
-    - char_a: "Arata"
-      char_b: "Yuki"
-      a_calls_self: "anh"
-      a_calls_b: "em"
-      context: "Lãng mạn"
-      notes: ""
-```
-
-Tells the model exactly which Vietnamese pronouns each character uses for themselves and others.
-
-### Prior Volumes (`data/prior/*.epub`)
-
-Place previously translated volumes here (sorted by filename). The chapters from the latest volume are seeded as context when translating the next volume—specifically, the last `context_window` chapters (or all chapters if `context_window: ~`).
-
-```
-data/prior/
-├── vol01_vi.epub
-├── vol02_vi.epub
-└── vol03_vi.epub  ← last N chapters seeded when translating vol04
-```
-
----
-
-## Checkpoint / Resume
-
-Translation progress is saved to `<output>.checkpoint.json` after every chapter (or batch chunk). If a run is interrupted for any reason (rate limit, Ctrl-C, crash), simply re-run `python main.py` — completed chapters are skipped automatically.
-
-The checkpoint file is deleted when a volume finishes successfully.
-
-To restart from scratch: set `resume: false` in `config.yaml` (or delete the `.checkpoint.json` file manually).
-
----
-
 ## Project Structure
 
 ```
 en-to-vn-ln-translate/
-├── main.py                  # run this — reads config.yaml, translates all EPUBs in data/input/
+├── main.py                  # reads configs, translates all EPUBs in data/input/
 ├── trim_epub.py             # standalone EPUB chapter remover
 ├── config.yaml              # all settings
 ├── requirements.txt
-├── .env                     # GEMINI_API_KEY (gitignored)
 ├── .env.example             # template
 ├── translator/
 │   ├── config.py            # TranslatorConfig dataclass
@@ -275,9 +288,9 @@ The default config is tuned for Gemini's free tier (20 RPD, 5 RPM):
 
 | Setting           | Default | Why                                                  |
 | ----------------- | ------- | ---------------------------------------------------- |
-| `batch: true`     | on      | groups 5 chapters → 1 request instead of 5           |
-| `batch_size: 5`   | 5       | balance between request count and output token limit |
+| `batch: true`     | on      | groups 3 chapters → 1 request instead of 3           |
+| `batch_size: 3`   | 3       | balance between request count and output token limit |
 | `evaluate: false` | off     | evaluation doubles RPD usage                         |
-| `resume: true`    | on      | safe to stop/start across days                       |
+| `resume: true`    | on      | safe to stop/start                                   |
 
-With 18 chapters and `batch_size: 5` you use 4 RPD instead of 18.
+With 18 chapters and `batch_size: 3` you use 6 RPD instead of 18.
