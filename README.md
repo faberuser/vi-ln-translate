@@ -46,19 +46,11 @@ Get a free key at <https://aistudio.google.com/app/apikey>.
 
 ## Quick Start
 
-```
-data/
-├── input/             ← put source .epub files here
-├── output/            ← translated EPUBs appear here
-├── glossaries/        ← .yaml/.json glossary files (optional)
-├── relationships/     ← .yaml/.json relationship matrix files (optional)
-└── prior/             ← previously translated volumes for context seeding (optional)
-```
-
 1. Drop your `.epub` file(s) into `data/input/`
-2. Edit `config.yaml` if needed (see below)
-3. Edit `glossaries/*.yaml` or `relationships/*.yaml` if needed (see below)
-4. Run:
+2. (Optional) Edit `config.yaml` if needed (see below)
+3. (Optional) Edit `glossaries/*.yaml` or `relationships/*.yaml` if needed (see below)
+4. (Optional) Drop previously VI translated volumes into `data/prior/` if needed (see below)
+5. Run:
 
 ```bash
 python main.py
