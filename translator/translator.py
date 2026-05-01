@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .checkpoint import CheckpointManager, restore_results
@@ -12,6 +12,7 @@ from .gemini_client import GeminiClient, DailyQuotaExhaustedError
 from .glossary import Glossary
 from .pronoun_system import RelationshipMatrix
 from .prompts import get_system_instruction, TRANSLATION_PROMPT_TEMPLATE, BATCH_TRANSLATION_PROMPT_TEMPLATE, BATCH_CHAPTER_ENTRY
+from .style_reference import StyleReference
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class Translator:
         gemini_client: GeminiClient,
         glossary: Optional[Glossary] = None,
         relationship_matrix: Optional[RelationshipMatrix] = None,
+        style_reference: Optional[StyleReference] = None,
         context_window: int = 3,
         review_threshold: float = 75.0,
         max_output_tokens: int = 65536,
@@ -48,6 +50,7 @@ class Translator:
         self.client = gemini_client
         self.glossary = glossary or Glossary()
         self.relationships = relationship_matrix or RelationshipMatrix()
+        self.style_reference = style_reference or StyleReference()
         self.context_window = max(0, context_window)
         self.review_threshold = review_threshold
         self.max_output_tokens = max_output_tokens
@@ -112,6 +115,7 @@ class Translator:
         """
         glossary_section = self.glossary.to_prompt_text()
         pronoun_section = self.relationships.to_prompt_text()
+        style_section = self.style_reference.to_prompt_text()
         context_section = self._build_context_section(seed_results)
 
         chapters_block = "\n\n".join(
@@ -126,6 +130,7 @@ class Translator:
         prompt = BATCH_TRANSLATION_PROMPT_TEMPLATE.format(
             glossary_section=glossary_section,
             pronoun_section=pronoun_section,
+            style_section=style_section,
             context_section=context_section,
             chapter_count=len(chapters),
             chapters_block=chapters_block,
@@ -213,11 +218,13 @@ class Translator:
         """Translate a single chapter, using past results as context."""
         glossary_section = self.glossary.to_prompt_text()
         pronoun_section = self.relationships.to_prompt_text()
+        style_section = self.style_reference.to_prompt_text()
         context_section = self._build_context_section(past_results)
 
         prompt = TRANSLATION_PROMPT_TEMPLATE.format(
             glossary_section=glossary_section,
             pronoun_section=pronoun_section,
+            style_section=style_section,
             context_section=context_section,
             chapter_title=chapter.title,
             chapter_content=chapter.content,

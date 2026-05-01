@@ -11,7 +11,6 @@ Translated EPUBs are written to data/output/.
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import List
@@ -63,6 +62,7 @@ def main() -> None:
     from translator.glossary import Glossary
     from translator.pronoun_system import RelationshipMatrix
     from translator.scanner import BookScanner
+    from translator.style_reference import BookStyleAnalyzer, StyleReference
     from translator.translator import Translator
 
     cfg = TranslatorConfig.load()
@@ -92,6 +92,8 @@ def main() -> None:
     relationships_dir = Path(cfg.relationships_dir)
     prior_dir        = Path(cfg.prior_volumes_dir)
 
+    style_references_dir = Path(cfg.style_references_dir)
+
     # Derive source language label for display
     _lang_label = "JP→VI" if cfg.source_language.lower() in ("jp", "ja") else "EN→VI"
 
@@ -105,6 +107,35 @@ def main() -> None:
     console.print(f"  Input dir  : {input_dir.resolve()}  ({len(input_epubs)} epub(s))")
     console.print(f"  Output dir : {output_dir.resolve()}")
     console.rule()
+    # ── Style references ──────────────────────────────────────────────────
+    style_ref = StyleReference()
+    _STYLE_EXTS = ("*.epub", "*.txt")
+    style_files: List[Path] = []
+    if style_references_dir.exists():
+        for pattern in _STYLE_EXTS:
+            style_files.extend(style_references_dir.glob(pattern))
+        style_files = sorted(style_files)
+
+    if style_files:
+        style_analyzer = BookStyleAnalyzer(GeminiClient(api_key=cfg.api_key, model_name=cfg.model))
+        console.print(f"[dim]Style refs  : {len(style_files)} file(s) found in {style_references_dir}[/dim]")
+        for sf in style_files:
+            cache_path = style_references_dir / f"{sf.stem}.style.yaml"
+            try:
+                with console.status(f"[bold yellow]Analysing style: {sf.name}…[/bold yellow]"):
+                    profile = style_analyzer.analyze(
+                        book_path=str(sf),
+                        cache_path=str(cache_path),
+                    )
+                style_ref.add_profile(profile)
+                console.print(
+                    f"  [green]✓[/green] Style profile loaded: [bold]{sf.name}[/bold]  "
+                    f"(tone: {profile.tone or 'n/a'})"
+                )
+            except Exception as exc:
+                console.print(f"  [yellow]⚠  Could not analyse style reference '{sf.name}': {exc}[/yellow]")
+    else:
+        console.print(f"[dim]Style refs  : none found in {style_references_dir}[/dim]")
 
     # ── Glossary ──────────────────────────────────────────────────────────
     gloss = Glossary()
@@ -202,6 +233,7 @@ def main() -> None:
         gemini_client=client,
         glossary=gloss,
         relationship_matrix=matrix,
+        style_reference=style_ref,
         context_window=cfg.context_window,
         review_threshold=cfg.review_threshold,
         max_output_tokens=cfg.max_tokens,

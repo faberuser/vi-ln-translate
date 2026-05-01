@@ -26,11 +26,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .translator import TranslationResult
-    from .epub_handler import Chapter
 
 logger = logging.getLogger(__name__)
 

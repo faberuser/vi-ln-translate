@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +27,7 @@ class TranslatorConfig:
     glossaries_dir: str = "data/glossaries"
     relationships_dir: str = "data/relationships"
     prior_volumes_dir: str = "data/prior"
+    style_references_dir: str = "data/style_references"
 
     # Translation behaviour
     source_language: str = "en"   # "en" for English→VI, "jp" for Japanese→VI

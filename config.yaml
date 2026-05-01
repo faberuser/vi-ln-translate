@@ -15,6 +15,7 @@ output_dir: data/output # translated EPUBs are written here
 glossaries_dir: data/glossaries # *.yaml / *.json  → merged Glossary
 relationships_dir: data/relationships # *.yaml / *.json  → merged RelationshipMatrix
 prior_volumes_dir: data/prior # *.epub (sorted)  → prior-volume context seed
+style_references_dir: data/style_references # *.epub / *.txt → writing style to mimic
 
 # ── Translation ───────────────────────────────────────────────────────────────
 # Source language of the input EPUBs:
