@@ -29,6 +29,7 @@ class TranslatorConfig:
     prior_volumes_dir: str = "data/prior"
 
     # Translation behaviour
+    source_language: str = "en"   # "en" for English→VI, "jp" for Japanese→VI
     batch: bool = True
     batch_size: int = 5
     max_tokens: int = 65536
@@ -40,6 +41,9 @@ class TranslatorConfig:
     # Quality evaluation
     evaluate: bool = False
     review_threshold: float = 75.0
+
+    # Auto-scan
+    auto_scan: bool = True   # scan book and generate draft glossary/relationships before translating
 
     # Misc
     verbose: bool = False

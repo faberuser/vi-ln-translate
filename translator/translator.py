@@ -11,7 +11,7 @@ from .evaluator import Evaluator
 from .gemini_client import GeminiClient, DailyQuotaExhaustedError
 from .glossary import Glossary
 from .pronoun_system import RelationshipMatrix
-from .prompts import SYSTEM_INSTRUCTION, TRANSLATION_PROMPT_TEMPLATE, BATCH_TRANSLATION_PROMPT_TEMPLATE, BATCH_CHAPTER_ENTRY
+from .prompts import get_system_instruction, TRANSLATION_PROMPT_TEMPLATE, BATCH_TRANSLATION_PROMPT_TEMPLATE, BATCH_CHAPTER_ENTRY
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class Translator:
         review_threshold: float = 75.0,
         max_output_tokens: int = 65536,
         batch_chunk_size: int = 5,
+        source_language: str = "en",
     ) -> None:
         self.client = gemini_client
         self.glossary = glossary or Glossary()
@@ -51,6 +52,8 @@ class Translator:
         self.review_threshold = review_threshold
         self.max_output_tokens = max_output_tokens
         self.batch_chunk_size = max(1, batch_chunk_size)
+        self.source_language = source_language
+        self._system_instruction = get_system_instruction(source_language)
         self.evaluator = Evaluator(gemini_client)
         # Seed chapters from previously translated volumes (loaded via load_prior_volumes)
         self._seed_results: List[TranslationResult] = []
@@ -131,7 +134,7 @@ class Translator:
         logger.info("Batch-translating %d chapters in 1 request…", len(chapters))
         raw = self.client.generate(
             prompt=prompt,
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=self._system_instruction,
             temperature=0.4,
             max_output_tokens=self.max_output_tokens,
         )
@@ -223,7 +226,7 @@ class Translator:
         logger.info("Translating: %s", chapter.title)
         raw = self.client.generate(
             prompt=prompt,
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=self._system_instruction,
             temperature=0.4,
             max_output_tokens=self.max_output_tokens,
         )

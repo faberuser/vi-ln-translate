@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# EN→VI Light Novel Translator — configuration
+# EN→VI / JP→VI Light Novel Translator — configuration
 # Edit this file, then run:  python main.py
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,11 @@ relationships_dir: data/relationships # *.yaml / *.json  → merged Relationship
 prior_volumes_dir: data/prior # *.epub (sorted)  → prior-volume context seed
 
 # ── Translation ───────────────────────────────────────────────────────────────
+# Source language of the input EPUBs:
+#   "en"  — English → Vietnamese  (default)
+#   "jp"  — Japanese → Vietnamese
+source_language: en
+
 batch: true # send chapters in chunks (saves RPD quota)
 batch_size: 3 # chapters per API request when batch: true
 max_tokens: 65536 # max output tokens per request
@@ -26,6 +31,14 @@ resume: true # resume from checkpoint after interruption
 # Chapter range — set to restrict which chapters are translated
 start_chapter: 0 # 0-based inclusive
 end_chapter: ~ # null/~ = all chapters
+
+# ── Auto-scan ────────────────────────────────────────────────────────────────
+# When true, the translator scans each input EPUB before translating and
+# auto-generates draft glossary + relationship files under data/glossaries/
+# and data/relationships/.  You will be prompted to review/edit them before
+# translation begins.  Files are only generated once (skipped if they already
+# exist), so it is safe to keep this enabled.
+auto_scan: true
 
 # ── Quality evaluation ────────────────────────────────────────────────────────
 evaluate: false # second-pass AI evaluation (costs 1 extra RPD per chapter)

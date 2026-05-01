@@ -1,5 +1,5 @@
 """
-main.py — EN→VI Light Novel Translator
+main.py — EN→VI / JP→VI Light Novel Translator
 
 Just run:  python main.py
 
@@ -62,6 +62,7 @@ def main() -> None:
     from translator.gemini_client import GeminiClient
     from translator.glossary import Glossary
     from translator.pronoun_system import RelationshipMatrix
+    from translator.scanner import BookScanner
     from translator.translator import Translator
 
     cfg = TranslatorConfig.load()
@@ -91,11 +92,16 @@ def main() -> None:
     relationships_dir = Path(cfg.relationships_dir)
     prior_dir        = Path(cfg.prior_volumes_dir)
 
-    console.rule("[bold blue]Light Novel EN→VI Translator[/bold blue]")
+    # Derive source language label for display
+    _lang_label = "JP→VI" if cfg.source_language.lower() in ("jp", "ja") else "EN→VI"
+
+    console.rule(f"[bold blue]Light Novel {_lang_label} Translator[/bold blue]")
     console.print(f"  Model      : {cfg.model}")
+    console.print(f"  Language   : {_lang_label}")
     console.print(f"  Mode       : {'BATCH (%d chapters/request)' % cfg.batch_size if cfg.batch else 'per-chapter'}")
     console.print(f"  Evaluate   : {'no' if (not cfg.evaluate or cfg.batch) else 'yes'}")
     console.print(f"  Resume     : {'yes' if cfg.resume else 'no'}")
+    console.print(f"  Auto-scan  : {'yes' if cfg.auto_scan else 'no'}")
     console.print(f"  Input dir  : {input_dir.resolve()}  ({len(input_epubs)} epub(s))")
     console.print(f"  Output dir : {output_dir.resolve()}")
     console.rule()
@@ -120,6 +126,76 @@ def main() -> None:
     else:
         console.print(f"[dim]Relations  : none found in {relationships_dir}[/dim]")
 
+    console.rule()
+
+    # ── Auto-scan: generate draft glossary/relationships if requested ──────
+    if cfg.auto_scan:
+        client_for_scan = GeminiClient(api_key=cfg.api_key, model_name=cfg.model)
+        scanner = BookScanner(client_for_scan, source_language=cfg.source_language)
+        any_scanned = False
+
+        for epub_path in input_epubs:
+            stem = epub_path.stem
+            gloss_out  = glossaries_dir   / f"{stem}_glossary.yaml"
+            rel_out    = relationships_dir / f"{stem}_relationships.yaml"
+
+            need_gloss = not gloss_out.exists()
+            need_rel   = not rel_out.exists()
+
+            if not need_gloss and not need_rel:
+                continue  # draft files already exist — skip
+
+            console.print(
+                f"\n[bold yellow]Auto-scan[/bold yellow]: '{epub_path.name}' has no draft glossary/relationships yet."
+            )
+            console.print("  Scanning the book to generate initial drafts… (this uses one API call)\n")
+
+            try:
+                with console.status("[bold yellow]Scanning…[/bold yellow]"):
+                    gloss_data, rel_data = scanner.scan_epub(str(epub_path))
+            except Exception as exc:
+                console.print(f"[bold red]✗  Scan failed:[/bold red] {exc}")
+                console.print("  Continuing without draft files. You can add them manually later.")
+                continue
+
+            if need_gloss:
+                gloss_out.parent.mkdir(parents=True, exist_ok=True)
+                scanner.save_glossary(gloss_data, str(gloss_out))
+                console.print(
+                    f"  [green]✓[/green] Glossary draft saved → [bold]{gloss_out}[/bold]"
+                    f"  ({len(gloss_data.get('entries', []))} entries)"
+                )
+                # Load immediately so these entries are used in translation
+                gloss.load(str(gloss_out))
+
+            if need_rel:
+                rel_out.parent.mkdir(parents=True, exist_ok=True)
+                scanner.save_relationships(rel_data, str(rel_out))
+                console.print(
+                    f"  [green]✓[/green] Relationships draft saved → [bold]{rel_out}[/bold]"
+                    f"  ({len(rel_data.get('relationships', []))} pairs)"
+                )
+                # Load immediately
+                matrix.load(str(rel_out))
+
+            any_scanned = True
+
+        if any_scanned:
+            console.print()
+            console.print(
+                "[bold yellow]⚠  Draft files have been generated.[/bold yellow] "
+                "Please open and review them now."
+            )
+            console.print(
+                "   Edit the files, then press [bold]Enter[/bold] to continue with translation, "
+                "or [bold]Ctrl+C[/bold] to abort and re-run later."
+            )
+            try:
+                input()
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Aborted. Re-run python main.py when ready.[/yellow]")
+                sys.exit(0)
+
     # ── Translator instance (shared across all input volumes) ─────────────
     client = GeminiClient(api_key=cfg.api_key, model_name=cfg.model)
     translator = Translator(
@@ -130,6 +206,7 @@ def main() -> None:
         review_threshold=cfg.review_threshold,
         max_output_tokens=cfg.max_tokens,
         batch_chunk_size=cfg.batch_size,
+        source_language=cfg.source_language,
     )
 
     # ── Seed prior-volume context ─────────────────────────────────────────
