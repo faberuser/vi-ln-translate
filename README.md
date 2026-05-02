@@ -29,7 +29,7 @@ Just drop EPUBs into `data/input/`, edit `config.yaml`, and run `python main.py`
 
 ```bash
 # 1. Clone / unzip the project
-cd en-to-vn-ln-translate
+cd vi-ln-translate
 
 # 2. Create a virtual environment
 python -m venv venv
@@ -181,7 +181,7 @@ data/style_references/
 └── my-reference.style.yaml ← auto-generated cache (editable)
 ```
 
-> **Tip**: Use a Vietnamese-language EPUB/TXT for the best results — the AI learns from actual Vietnamese prose. You can open `<stem>.style.yaml` and edit any field manually, or delete it to force re-analysis.
+> **Tip**: Use a Vietnamese-language EPUB/TXT for the best results — the AI learns from actual Vietnamese prose. You can open `<stem>.style.yaml` and edit any field manually, or delete it to force re-analysis. It is recommended to use the same genre as the translating book.
 
 ---
 
@@ -191,7 +191,7 @@ Translation progress is saved to `<output>.checkpoint.json` after every chapter 
 
 The checkpoint file is deleted when a volume finishes successfully.
 
-To restart from scratch: delete the `.checkpoint.json` file manually (or set `resume: false` in `config.yaml`).
+To restart from scratch: delete the `data/output/*.checkpoint.json` file manually (or set `resume: false` in `config.yaml`).
 
 ---
 
@@ -254,7 +254,7 @@ The script prints the chapter table, asks which indices to remove, shows a previ
 ## Project Structure
 
 ```
-en-to-vn-ln-translate/
+vi-ln-translate/
 ├── main.py                  # reads configs, translates all EPUBs in data/input/
 ├── trim_epub.py             # standalone EPUB chapter remover
 ├── config.yaml              # all settings
