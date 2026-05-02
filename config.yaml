@@ -21,7 +21,7 @@ style_references_dir: data/style_references # *.epub / *.txt → writing style t
 # Source language of the input EPUBs:
 #   "en"  — English → Vietnamese  (default)
 #   "jp"  — Japanese → Vietnamese
-source_language: en
+source_language: jp
 
 batch: true # send chapters in chunks (saves RPD quota)
 batch_size: 3 # chapters per API request when batch: true
