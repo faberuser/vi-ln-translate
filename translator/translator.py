@@ -56,6 +56,7 @@ class Translator:
         self.max_output_tokens = max_output_tokens
         self.batch_chunk_size = max(1, batch_chunk_size)
         self.source_language = source_language
+        self.illustration_chapter = False  # set after init via config
         self._system_instruction = get_system_instruction(source_language)
         self.evaluator = Evaluator(gemini_client)
         # Seed chapters from previously translated volumes (loaded via load_prior_volumes)
@@ -409,7 +410,8 @@ class Translator:
             (r.chapter, r.translated_title, _text_to_html(r.translated_content))
             for r in chapter_results
         ]
-        handler.save(output_path, translated)
+        handler.save(output_path, translated,
+                     illustration_chapter=self.illustration_chapter)
 
         # Clean up checkpoint on success
         ckpt.delete()
@@ -492,6 +494,12 @@ def _text_to_html(text: str) -> str:
     parts: List[str] = []
     for para in paragraphs:
         stripped = para.strip()
+        # Normalize characters unsupported by some e-readers
+        stripped = stripped.replace("\u2500", "\u2014")   # ─ → —
+        stripped = stripped.replace("\u2015", "\u2014")   # ― → —
+        # Strip markdown bold/italic markers (**text** or *text*)
+        stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)
+        stripped = re.sub(r"\*(.+?)\*", r"\1", stripped)
         # Markdown-style headings (#, ##, ###)
         m = re.match(r"^(#{1,3})\s+(.*)", stripped)
         if m:

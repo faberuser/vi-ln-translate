@@ -127,16 +127,22 @@ class EpubHandler:
         # (Chapter, new_title: str, new_html_body: str)
         translated_chapters: List[tuple],
         gemini_client: "Optional[GeminiClient]" = None,
+        illustration_chapter: bool = False,
     ) -> None:
         """
         Build a clean LTR EPUB from scratch using the translated content.
 
         Copies the cover, inline images, and standalone illustration pages
-        from the source book at their original spine positions; all Japanese
-        CSS, RTL settings, and structural metadata are left behind.
+        from the source book; all Japanese CSS, RTL settings, and structural
+        metadata are left behind.
 
         ``translated_chapters`` is a list of 3-tuples:
             (original Chapter, translated_title, translated_html_body)
+
+        When ``illustration_chapter=True``, all illustrations (cover page,
+        front/back matter, and chapter inline images) are collected into a
+        single "Minh Hoạ" chapter placed right after the nav in the spine,
+        instead of being spread throughout the main content.
         """
         if self.book is None:
             raise RuntimeError("No book loaded. Call load() first.")
@@ -279,41 +285,32 @@ class EpubHandler:
         # ── Build the spine list ───────────────────────────────────────────
         all_spine_items: List[epub.EpubHtml] = []
 
-        # Illustration pages that precede all chapters
-        for fname in illus_by_pos.get(-1, []):
-            all_spine_items.append(_make_illus_page(fname))
+        # Collect all image filenames in order for the illustration_chapter mode
+        # Key: order of appearance (front-matter first, then per chapter, then back)
+        all_illus_fnames: List[str] = []
 
-        # Chapters + illustration pages that follow each chapter
+        if not illustration_chapter:
+            # Normal mode: standalone illustration pages at their original positions
+            for fname in illus_by_pos.get(-1, []):
+                all_spine_items.append(_make_illus_page(fname))
+
+        # Chapters
         epub_chapters: List[epub.EpubHtml] = []
         for ch_idx, (ch, new_title, new_body) in enumerate(translated_chapters, start=1):
             if not new_body.lstrip().startswith("<h"):
                 new_body = f"<h2>{_escape_xml(new_title)}</h2>\n{new_body}"
 
-            # Re-insert inline images at approximately their original positions
+            # Re-insert inline images: append them at the end of the chapter
+            # (or collect for illustration_chapter mode)
             img_positions = _get_inline_image_positions(
                 ch.html_content, _img_name_map)
-            if img_positions:
-                lines = new_body.split("\n")
-                block_idxs = [
-                    i for i, l in enumerate(lines)
-                    if re.match(r"\s*<(?:p|h[1-6])\b", l)
-                ]
-                n_blocks = len(block_idxs)
-                if n_blocks:
-                    insertions: dict[int, list] = {}
-                    for frac, fname in img_positions:
-                        target = min(int(frac * n_blocks), n_blocks - 1)
-                        line_idx = block_idxs[target]
-                        insertions.setdefault(line_idx, []).append(
-                            f'<p><img src="image/{fname}" alt=""/></p>'
-                        )
-                    for line_idx in sorted(insertions.keys(), reverse=True):
-                        for img_html in reversed(insertions[line_idx]):
-                            lines.insert(line_idx + 1, img_html)
-                    new_body = "\n".join(lines)
-                else:
-                    for _, fname in img_positions:
-                        new_body += f'\n<p><img src="image/{fname}" alt=""/></p>'
+            inline_img_fnames = [fname for _, fname in img_positions]
+            if illustration_chapter:
+                all_illus_fnames.extend(inline_img_fnames)
+            elif inline_img_fnames:
+                for fname in inline_img_fnames:
+                    src = _img_name_map.get(fname, f"image/{fname}")
+                    new_body += f'\n<p><img src="{src}" alt=""/></p>'
 
             xhtml = epub.EpubHtml(
                 uid=str(ch_idx),
@@ -334,15 +331,58 @@ class EpubHandler:
             epub_chapters.append(xhtml)
             all_spine_items.append(xhtml)
 
-            # Illustration pages that follow this chapter in the original spine
-            orig_ch_idx = chapter_id_map.get(ch.id, ch_idx - 1)
-            for fname in illus_by_pos.get(orig_ch_idx, []):
-                all_spine_items.append(_make_illus_page(fname))
+            if not illustration_chapter:
+                # Standalone illustration pages after this chapter
+                orig_ch_idx = chapter_id_map.get(ch.id, ch_idx - 1)
+                for fname in illus_by_pos.get(orig_ch_idx, []):
+                    all_spine_items.append(_make_illus_page(fname))
+
+        if illustration_chapter:
+            # Gather all standalone illustration filenames in spine order
+            standalone: List[str] = []
+            for pos_idx in sorted(illus_by_pos.keys()):
+                standalone.extend(illus_by_pos[pos_idx])
+            # Deduplicate while preserving order, then combine with inline
+            seen: set = set()
+            ordered: List[str] = []
+            for fname in standalone + all_illus_fnames:
+                if fname not in seen:
+                    seen.add(fname)
+                    ordered.append(fname)
+
+            # Build a single "Minh Hoạ" chapter
+            img_tags = "\n".join(
+                f'<p><img src="{_img_name_map.get(f, f"image/{f}")}" '
+                f'alt="" style="max-width:100%;height:auto;display:block;margin:1em auto;"/></p>'
+                for f in ordered
+                if f in _img_name_map
+            )
+            minh_hoa = epub.EpubHtml(
+                uid="minh_hoa",
+                file_name="minh_hoa.xhtml",
+                title="Minh Hoạ",
+                lang="vi",
+            )
+            minh_hoa.content = (
+                "<?xml version='1.0' encoding='utf-8'?>\n"
+                "<!DOCTYPE html>\n"
+                "<html xmlns='http://www.w3.org/1999/xhtml' "
+                "xmlns:epub='http://www.idpf.org/2007/ops' "
+                "lang='vi' xml:lang='vi'>\n"
+                "<head><title>Minh Ho\u1ea1</title></head>\n"
+                f"<body>\n<h2>Minh Ho\u1ea1</h2>\n{img_tags}\n</body>\n</html>"
+            ).encode("utf-8")
+            new_book.add_item(minh_hoa)
+            # Prepend to spine (after nav) and add to TOC
+            all_spine_items.insert(0, minh_hoa)
+            epub_chapters_toc = [minh_hoa] + epub_chapters
+        else:
+            epub_chapters_toc = epub_chapters
 
         # ── Navigation / spine ────────────────────────────────────────────
         new_book.toc = tuple(
             epub.Link(ch.file_name, ch.title, ch.id)
-            for ch in epub_chapters
+            for ch in epub_chapters_toc
         )
         new_book.add_item(epub.EpubNcx())
         new_book.add_item(epub.EpubNav())

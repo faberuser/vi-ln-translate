@@ -44,10 +44,13 @@ class TranslatorConfig:
     review_threshold: float = 75.0
 
     # Auto-scan
-    auto_scan: bool = True   # scan book and generate draft glossary/relationships before translating
+    # scan book and generate draft glossary/relationships before translating
+    auto_scan: bool = True
 
     # Misc
     verbose: bool = False
+    # collect all illustrations into a single "Minh Hoạ" chapter
+    illustration_chapter: bool = False
 
     @classmethod
     def load(cls, filepath: str | Path = _CONFIG_FILE) -> "TranslatorConfig":

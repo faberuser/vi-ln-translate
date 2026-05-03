@@ -47,3 +47,6 @@ review_threshold: 75.0 # chapters scoring below this are flagged for human revie
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 verbose: false # show DEBUG-level logs
+illustration_chapter:
+    false # collect ALL illustrations into a single "Minh Hoạ" chapter
+    # placed after nav in the spine (ignores inline/positional placement)
