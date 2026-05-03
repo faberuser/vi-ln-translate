@@ -478,6 +478,11 @@ def _strip_english_annotation(text: str) -> str:
     m_trail = _EN_BRACKET_TRAIL_RE.search(text)
     if m_trail and _ASCII_PRINTABLE_RE.match(m_trail.group(1).strip()):
         return text[:m_trail.start()].strip()
+    # Pattern 3: entire title wrapped in brackets with no English counterpart
+    # e.g. "[Lời bạt]" or "[Ngoại truyện: Sự tồn tại bất tương dung]"
+    if (text.startswith("[") and text.endswith("]")
+            and text.count("[") == 1 and text.count("]") == 1):
+        return text[1:-1].strip()
     return text
 
 
