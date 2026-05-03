@@ -81,7 +81,8 @@ class Translator:
             try:
                 chapters = handler.load(path)
             except Exception as exc:
-                logger.warning("Could not load prior volume '%s': %s", path, exc)
+                logger.warning(
+                    "Could not load prior volume '%s': %s", path, exc)
                 continue
             for ch in chapters:
                 # Treat the chapter content as already-translated Vietnamese text
@@ -92,7 +93,8 @@ class Translator:
                         translated_content=ch.content,
                     )
                 )
-            logger.info("Seeded %d chapters from prior volume: %s", len(chapters), path)
+            logger.info("Seeded %d chapters from prior volume: %s",
+                        len(chapters), path)
             logger.debug(
                 "  (context_window=%d → at most %d chapter(s) will be used per prompt)",
                 self.context_window, self.context_window,
@@ -136,7 +138,8 @@ class Translator:
             chapters_block=chapters_block,
         )
 
-        logger.info("Batch-translating %d chapters in 1 request…", len(chapters))
+        logger.info("Batch-translating %d chapters in 1 request…",
+                    len(chapters))
         raw = self.client.generate(
             prompt=prompt,
             system_instruction=self._system_instruction,
@@ -168,8 +171,10 @@ class Translator:
             body = chapter_bodies.get(i + 1, "")
             if body and "###TITLE###" in body and "###CONTENT###" in body:
                 after_title = body.split("###TITLE###", 1)[1]
-                title_part, content_part = after_title.split("###CONTENT###", 1)
-                title = title_part.strip() or chapter.title
+                title_part, content_part = after_title.split(
+                    "###CONTENT###", 1)
+                title = _strip_english_annotation(
+                    title_part.strip()) or chapter.title
                 content = content_part.strip()
             else:
                 # Fallback: use original title and whatever text was returned
@@ -185,7 +190,8 @@ class Translator:
                     chapter=chapter,
                     translated_title=title,
                     translated_content=content,
-                    parse_failed=not (body and "###TITLE###" in body and "###CONTENT###" in body),
+                    parse_failed=not (
+                        body and "###TITLE###" in body and "###CONTENT###" in body),
                 )
             )
 
@@ -283,7 +289,8 @@ class Translator:
         # ── Checkpoint: load prior progress ──────────────────────────────
         ckpt = CheckpointManager(output_path)
         saved_map: dict = ckpt.load() if resume else {}
-        already_done: List[TranslationResult] = restore_results(saved_map, all_chapters)
+        already_done: List[TranslationResult] = restore_results(
+            saved_map, all_chapters)
         done_ids = {r.chapter.id for r in already_done}
         pending = [ch for ch in chapters_to_translate if ch.id not in done_ids]
 
@@ -307,11 +314,13 @@ class Translator:
                 )
             chapter_results: List[TranslationResult] = list(already_done)
             for chunk_idx in range(num_chunks):
-                chunk = pending[chunk_idx * chunk_size:(chunk_idx + 1) * chunk_size]
+                chunk = pending[chunk_idx *
+                                chunk_size:(chunk_idx + 1) * chunk_size]
                 logger.info(
                     "  Chunk %d/%d: chapters %d–%d (%s … %s)",
                     chunk_idx + 1, num_chunks,
-                    chunk_idx * chunk_size + 1, chunk_idx * chunk_size + len(chunk),
+                    chunk_idx * chunk_size + 1, chunk_idx *
+                    chunk_size + len(chunk),
                     chunk[0].title, chunk[-1].title,
                 )
                 try:
@@ -335,8 +344,10 @@ class Translator:
                     )
                     retry_ctx = seed_results + chapter_results
                     for fail_result in failed:
-                        logger.info("  Retrying: %s", fail_result.chapter.title)
-                        retried = self.translate_chapter(fail_result.chapter, retry_ctx)
+                        logger.info("  Retrying: %s",
+                                    fail_result.chapter.title)
+                        retried = self.translate_chapter(
+                            fail_result.chapter, retry_ctx)
                         retry_ctx = retry_ctx + [retried]
                         # Replace in chunk_results
                         for j, cr in enumerate(chunk_results):
@@ -358,10 +369,12 @@ class Translator:
             for idx, chapter in enumerate(pending, start=1):
                 logger.info(
                     "[%d/%d] %s",
-                    len(already_done) + idx, len(chapters_to_translate), chapter.title,
+                    len(already_done) +
+                    idx, len(chapters_to_translate), chapter.title,
                 )
 
-                result = self.translate_chapter(chapter, seed_results + chapter_results)
+                result = self.translate_chapter(
+                    chapter, seed_results + chapter_results)
 
                 if evaluate:
                     score, feedback, issues = self.evaluator.evaluate(
@@ -433,7 +446,7 @@ class Translator:
         if "###TITLE###" in response and "###CONTENT###" in response:
             after_title_tag = response.split("###TITLE###", 1)[1]
             title_part, rest = after_title_tag.split("###CONTENT###", 1)
-            title = title_part.strip() or title
+            title = _strip_english_annotation(title_part.strip()) or title
             content = rest.strip()
 
         return title, content
@@ -442,6 +455,31 @@ class Translator:
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Matches trailing " [Some English annotation]" where the bracket
+# content is entirely printable ASCII (no Vietnamese diacritics).
+_EN_BRACKET_TRAIL_RE = re.compile(r'\s*\[([^\[\]]*)\]\s*$')
+_ASCII_PRINTABLE_RE = re.compile(r'^[\x20-\x7e]+$')
+
+
+def _strip_english_annotation(text: str) -> str:
+    """Remove English annotations added by the model to Vietnamese titles.
+
+    Handles two patterns Gemini commonly uses:
+    - Trailing bracket: ``Lời bạt [Afterword]`` → ``Lời bạt``
+    - Full-bracket with dash: ``[Mục lục - Table of Contents]`` → ``Mục lục``
+    """
+    text = text.strip()
+    # Pattern 1: whole string is [Vietnamese part - English part]
+    m_full = re.match(r'^\[(.+?)\s*-\s*([^\]]+)\]$', text)
+    if m_full and _ASCII_PRINTABLE_RE.match(m_full.group(2).strip()):
+        return m_full.group(1).strip()
+    # Pattern 2: trailing [English annotation]
+    m_trail = _EN_BRACKET_TRAIL_RE.search(text)
+    if m_trail and _ASCII_PRINTABLE_RE.match(m_trail.group(1).strip()):
+        return text[:m_trail.start()].strip()
+    return text
+
 
 def _text_to_html(text: str) -> str:
     """Convert plain translated text (possibly with markdown headings) to XHTML."""
@@ -453,7 +491,8 @@ def _text_to_html(text: str) -> str:
         m = re.match(r"^(#{1,3})\s+(.*)", stripped)
         if m:
             level = len(m.group(1))
-            heading_text = _escape_xml(m.group(2).strip())
+            heading_text = _escape_xml(
+                _strip_english_annotation(m.group(2).strip()))
             parts.append(f"<h{level}>{heading_text}</h{level}>")
         else:
             parts.append(f"<p>{_escape_xml(stripped)}</p>")

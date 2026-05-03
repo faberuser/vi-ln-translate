@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from ebooklib import epub, ITEM_DOCUMENT
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .gemini_client import GeminiClient
 
 # EPUB files are XHTML — suppress the spurious HTML-parser warning
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -116,68 +121,157 @@ class EpubHandler:
     def save(
         self,
         output_path: str,
-        translated_chapters: List[tuple],  # (Chapter, new_title: str, new_html_body: str)
+        # (Chapter, new_title: str, new_html_body: str)
+        translated_chapters: List[tuple],
+        gemini_client: "Optional[GeminiClient]" = None,
     ) -> None:
         """
-        Save a modified copy of the loaded EPUB with translated content.
+        Build a clean LTR EPUB from scratch using the translated content.
+
+        Copies the cover and all inline images from the source book; all
+        Japanese CSS, RTL settings, and structural metadata are left behind.
 
         ``translated_chapters`` is a list of 3-tuples:
             (original Chapter, translated_title, translated_html_body)
-        Only chapters present in this list are replaced; all others are kept as-is.
         """
         if self.book is None:
             raise RuntimeError("No book loaded. Call load() first.")
 
-        # Build lookup: chapter id → (title, html body)
-        replacements = {ch.id: (title, body) for ch, title, body in translated_chapters}
-        # Separate map for TOC title updates
-        title_map = {ch.id: title for ch, title, body in translated_chapters}
+        # ── Derive book title from the original metadata ──────────────────
+        orig_title = self.book.title or ""
+        if not orig_title:
+            orig_title = output_path
 
-        for item in self.book.get_items_of_type(ITEM_DOCUMENT):
-            item_name = item.get_name()
-            if item_name not in replacements:
+        # ── Build a brand-new ebooklib book ───────────────────────────────
+        new_book = epub.EpubBook()
+
+        dc_ns = "http://purl.org/dc/elements/1.1/"
+        raw_meta = self.book.metadata.get(dc_ns, {})
+
+        # Identifier — use original ISBN/UUID if present
+        id_entries = raw_meta.get("identifier", [])
+        identifier = id_entries[0][0] if id_entries and id_entries[0][0] else str(
+            id(new_book))
+        new_book.set_identifier(identifier)
+        new_book.set_language("vi")
+
+        # Copy original book title (stripped of CJK by prior pass, or from OPF)
+        title_entries = raw_meta.get("title", [])
+        orig_title = title_entries[0][0] if title_entries and title_entries[0][0] else ""
+        # Prefer output filename as the book title; fall back to original if it's already clean
+        import os as _os
+        out_basename = _os.path.splitext(_os.path.basename(output_path))[0]
+        book_title = out_basename if out_basename else orig_title
+        if book_title:
+            new_book.set_title(book_title)
+
+        # Copy authors/illustrators (skip blank or CJK-only entries)
+        creator_entries = raw_meta.get("creator", [])
+        for value, _attrs in creator_entries:
+            if value and not _JP_CHAR_RE.search(value):
+                new_book.add_author(value)
+
+        # ── Cover image ────────────────────────────────────────────────────
+        cover_item = None
+        for item in self.book.get_items():
+            if "cover" in item.get_name().lower() and item.media_type.startswith("image/"):
+                cover_item = item
+                break
+        # Prefer the item explicitly tagged as cover-image
+        for item in self.book.get_items():
+            props = getattr(item, "properties", "") or ""
+            if "cover-image" in props:
+                cover_item = item
+                break
+
+        cover_name = cover_item.get_name() if cover_item is not None else None
+        if cover_item is not None:
+            ext = cover_item.get_name().rsplit(".", 1)[-1].lower()
+            new_book.set_cover(f"cover.{ext}", cover_item.content)
+
+        # ── Non-cover images from source ──────────────────────────────────
+        # Map original filename → new path inside EPUB (flat under image/)
+        _img_name_map: dict[str, str] = {}
+        for item in self.book.get_items():
+            if not item.media_type.startswith("image/"):
                 continue
+            if item.get_name() == cover_name:
+                continue
+            orig_filename = item.get_name().rsplit("/", 1)[-1]
+            new_file_name = f"image/{orig_filename}"
+            _img_name_map[orig_filename] = new_file_name
+            img_item = epub.EpubItem(
+                uid=f"img_{orig_filename}",
+                file_name=new_file_name,
+                media_type=item.media_type,
+                content=item.content,
+            )
+            new_book.add_item(img_item)
 
-            new_title, new_body = replacements[item_name]
-
-            # Set item.title — ebooklib's get_content() builds <head><title> from this,
-            # NOT from the raw item.content bytes.
-            item.title = new_title
-
-            # Detect the heading level used in the original HTML (h1/h2/h3 → default h2)
-            raw = item.content
-            orig_html = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            orig_soup = BeautifulSoup(orig_html, "lxml")
-            orig_heading = orig_soup.find(["h1", "h2", "h3"])
-            heading_level = orig_heading.name if orig_heading else "h2"
-
-            # Inject translated title as a heading if the body doesn't already start with one
+        # ── Chapter XHTML items ────────────────────────────────────────────
+        epub_chapters: List[epub.EpubHtml] = []
+        for idx, (ch, new_title, new_body) in enumerate(translated_chapters, start=1):
             if not new_body.lstrip().startswith("<h"):
-                new_body = f"<{heading_level}>{_escape_xml(new_title)}</{heading_level}>\n{new_body}"
+                new_body = f"<h2>{_escape_xml(new_title)}</h2>\n{new_body}"
 
-            new_html = (
+            # Re-insert images from original chapter HTML
+            orig_soup = BeautifulSoup(ch.html_content, "lxml-xml")
+            img_blocks = []
+            for img_tag in orig_soup.find_all("img"):
+                src = img_tag.get("src", "")
+                filename = src.rsplit("/", 1)[-1]
+                if filename and filename in _img_name_map:
+                    img_blocks.append(
+                        f'<p><img src="image/{filename}" alt=""/></p>')
+            if img_blocks:
+                img_html = "\n".join(img_blocks)
+                # Insert after the first heading line
+                first_nl = new_body.find("\n")
+                if first_nl != -1:
+                    new_body = new_body[:first_nl + 1] + \
+                        img_html + "\n" + new_body[first_nl + 1:]
+                else:
+                    new_body = new_body + "\n" + img_html
+
+            xhtml = epub.EpubHtml(
+                uid=str(idx),
+                file_name=f"chap_{idx}.xhtml",
+                title=new_title,
+                lang="vi",
+            )
+            xhtml.content = (
                 "<?xml version='1.0' encoding='utf-8'?>\n"
-                "<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN' "
-                "'http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd'>\n"
-                "<html xmlns='http://www.w3.org/1999/xhtml'>\n"
+                "<!DOCTYPE html>\n"
+                "<html xmlns='http://www.w3.org/1999/xhtml' "
+                "xmlns:epub='http://www.idpf.org/2007/ops' "
+                "lang='vi' xml:lang='vi'>\n"
                 f"<head><title>{_escape_xml(new_title)}</title></head>\n"
                 f"<body>\n{new_body}\n</body>\n</html>"
-            )
-            item.content = new_html.encode("utf-8")
+            ).encode("utf-8")
+            new_book.add_item(xhtml)
+            epub_chapters.append(xhtml)
 
-        # Update EPUB TOC (NCX/NAV) link titles with translated titles
-        _update_toc_titles(self.book.toc, title_map)
+        # ── Navigation / spine ────────────────────────────────────────────
+        new_book.toc = tuple(
+            epub.Link(ch.file_name, ch.title, ch.id)
+            for ch in epub_chapters
+        )
+        new_book.add_item(epub.EpubNcx())
+        new_book.add_item(epub.EpubNav())
+        new_book.spine = ["nav"] + epub_chapters
 
-        # ebooklib crashes writing NCX when any TOC Link has uid=None
-        _fix_toc_uids(self.book.toc)
-
-        epub.write_epub(output_path, self.book)
+        epub.write_epub(output_path, new_book)
         logger.info("Saved translated EPUB to %s", output_path)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+# Matches any CJK / Japanese character block
+_JP_CHAR_RE = re.compile(
+    r"[\u3000-\u9fff\uff00-\uffef\u3040-\u30ff\u4e00-\u9fff]+"
+)
+
 
 def _fix_toc_uids(toc_items, _counter: list = None) -> None:
     """Recursively ensure every TOC Link has a non-None uid."""
