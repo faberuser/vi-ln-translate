@@ -7,21 +7,18 @@ Just drop EPUBs into `data/input/`, edit `config.yaml`, and run `python main.py`
 
 ## Features
 
-| Feature                  | Details                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------- |
-| **EN & JP source**       | Supports both English→VI and Japanese→VI translation, each with tailored prompt instructions  |
-| **Literary quality**     | Prompts engineered for "mượt mà / thoát ý" prose, not word-for-word output                    |
-| **Pronoun System**       | Relationship Matrix — each character pair has their own 1st/2nd-person pronouns               |
-| **Glossary**             | Consistent name/term translation via simple YAML files                                        |
-| **Style Reference**      | Feed a reference book to make the AI mimic its Vietnamese writing style                       |
-| **Auto-scan**            | Auto-generates draft glossary & relationship files before translating (one API call per EPUB) |
-| **Context window**       | Previously translated chapters fed back as context for coherent narrative                     |
-| **Prior volumes**        | Seed context from already-translated earlier volumes across a series                          |
-| **Batch mode**           | Multiple chapters per API request to save free-tier RPD quota                                 |
-| **Checkpoint / resume**  | Progress saved after every chapter/chunk — resume after any interruption                      |
-| **AI evaluation**        | Optional second-pass quality check — 0–100 score + issue list                                 |
-| **EPUB chapter trimmer** | Dedicated script to strip unwanted chapters before or after translation                       |
-| **EPUB I/O**             | Reads & writes standard EPUB 2/3 files via `ebooklib`                                         |
+| Feature                 | Details                                                                                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EN & JP source**      | Supports both English→VI and Japanese→VI translation, each with tailored prompt instructions                                                 |
+| **Literary quality**    | Prompts engineered for "mượt mà / thoát ý" prose, not word-for-word output                                                                   |
+| **Pronoun System**      | Relationship Matrix — each character pair has their own 1st/2nd-person pronouns                                                              |
+| **Glossary**            | Consistent name/term translation via simple YAML files                                                                                       |
+| **Style Reference**     | Feed a reference book to make the AI mimic its Vietnamese writing style                                                                      |
+| **Auto-scan**           | Auto-generates draft glossary, relationship, and **metadata** (book title + chapter titles) files before translating (one API call per EPUB) |
+| **Context window**      | Previously translated chapters fed back as context for coherent narrative                                                                    |
+| **Batch mode**          | Multiple chapters per API request to save free-tier RPD quota                                                                                |
+| **Checkpoint / resume** | Progress saved after every chapter/chunk — resume after any interruption                                                                     |
+| **AI evaluation**       | Optional second-pass quality check — 0–100 score + issue list                                                                                |
 
 ---
 
@@ -52,18 +49,20 @@ Get a free key at <https://aistudio.google.com/app/apikey>.
 
 1. Drop your `.epub` file(s) into `data/input/`
 2. Set `source_language` in `config.yaml` (`en` for English, `jp` for Japanese)
-3. (Optional) Edit `data/glossaries/*.yaml` or `data/relationships/*.yaml`
-4. (Optional) Drop previously translated volumes into `data/prior/`
-5. (Optional) Drop a reference book into `data/style_references/` to have the AI mimic its writing style
-6. Run:
+3. (Optional) Drop previously translated volumes into `data/prior/`
+4. (Optional) Drop a reference book into `data/style_references/` to have the AI mimic its writing style
+5. Run:
 
 ```bash
 python main.py
 ```
 
+6. (Optional) Edit `data/metadata/{stem}_metadata.yaml`, `data/glossaries/{stem}_glossary.yaml`, or `data/relationships/{stem}_relationships.yaml` (files are matched by book name)
+7. Press enter to start translation
+
 Translated files are written to `data/output/<name>.epub`.
 
-> **Auto-scan**: on first run the translator scans each input EPUB and auto-generates draft glossary and relationship files in `data/glossaries/` and `data/relationships/`. Review and edit them, then press Enter to continue.
+> **Auto-scan**: on first run the translator scans each input EPUB and auto-generates draft metadata, glossary and relationship files in `data/metadata/`, `data/glossaries/` and `data/relationships/`. Review and edit them, then press Enter to continue.
 
 ---
 
@@ -81,6 +80,7 @@ input_dir: data/input # source EPUBs go here
 output_dir: data/output # translated EPUBs written here
 glossaries_dir: data/glossaries # *.yaml / *.json  → merged Glossary
 relationships_dir: data/relationships # *.yaml / *.json  → merged RelationshipMatrix
+metadata_dir: data/metadata # *.yaml             → per-book title & chapter titles
 prior_volumes_dir: data/prior # *.epub (sorted)  → prior-volume context seed
 style_references_dir: data/style_references # *.epub / *.txt  → writing style to mimic
 
@@ -105,16 +105,17 @@ review_threshold: 75.0 # chapters scoring below this are flagged for human revie
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
 verbose: false # show DEBUG-level logs
+illustration_chapter: false # # collect ALL illustrations into a single "Minh Hoạ" chapter
 ```
 
 ### Key settings to tune
 
-| Setting           | Recommendation                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `source_language` | `en` for English source, `jp` for Japanese source                                  |
-| `batch_size`      | Lower (2) if you hit token limits; raise (8) for short chapters                    |
-| `context_window`  | `2`–`5` for ongoing stories; `1`–`2` for standalone; `~` to use all prior chapters |
-| `auto_scan`       | Keep `true` — generates glossary/relationships automatically before the first run  |
+| Setting           | Recommendation                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------ |
+| `source_language` | `en` for English source, `jp` for Japanese source                                                |
+| `batch_size`      | Lower (2) if you hit token limits; raise (8) for short chapters                                  |
+| `context_window`  | `2`–`5` for ongoing stories; `1`–`2` for standalone; `~` to use all prior chapters               |
+| `auto_scan`       | Keep `true` — generates glossary, relationships, and metadata automatically before the first run |
 
 > **Why gemini-3-flash-preview?** Flash models reduce thinking overhead, which is not beneficial in translation and may increase output token counts.
 
@@ -122,11 +123,31 @@ verbose: false # show DEBUG-level logs
 
 ## Data Files
 
-### Glossary (`data/glossaries/*.yaml`)
+For metadata, glossary and relationship, Gemini provides an initial translation during the scan. Review the file, correct any mistakes, then press Enter to start translating.
+
+### Book Metadata (`data/metadata/{stem}_metadata.yaml`)
+
+> **Auto-generated**: auto-generated by `auto_scan` at the same time as the glossary and relationships. One file per input EPUB, named `{stem}_metadata.yaml`.
+
+```yaml
+book_title:
+    source: "魔女と傭兵"
+    target: "Ma Nữ và Lính Đánh Thuê" # ← edit this
+chapters:
+    - source: "一話　双刃の故"
+      target: "Chương 1: Lưỡi Đôi" # ← edit if needed
+    - source: "あとがき"
+      target: "Lời kết"
+```
+
+- **`book_title.target`** — used as the EPUB title (`dc:title`) of the translated output.
+- **`chapters[].target`** — used as the chapter title in the translated output; overrides whatever Gemini produces during the main translation.
+
+### Glossary (`data/glossaries/{stem}_glossary.yaml`)
 
 > **Auto-generated**: with `auto_scan: true` (default), the translator calls Gemini once before translating to produce a draft glossary file. Review and edit it, then press Enter to continue.
 >
-> You can also create files manually. Files starting with `example_` are ignored.
+> You can also create the file manually.
 
 ```yaml
 entries:
@@ -136,11 +157,11 @@ entries:
       notes: ""
 ```
 
-Multiple files are merged automatically. All entries are injected into every translation prompt.
+The file must be named `{epub-stem}_glossary.yaml` (e.g. `vol07_glossary.yaml`). Only the glossary matching the current input EPUB is loaded — entries are injected into every translation prompt for that book.
 
-### Relationship Matrix (`data/relationships/*.yaml`)
+### Relationship Matrix (`data/relationships/{stem}_relationships.yaml`)
 
-> **Auto-generated**: similarly auto-generated by `auto_scan`. Files starting with `example_` are ignored.
+> **Auto-generated**: similarly auto-generated by `auto_scan`.
 
 ```yaml
 relationships:
@@ -152,7 +173,7 @@ relationships:
       notes: ""
 ```
 
-Tells the model exactly which Vietnamese pronouns each character uses for themselves and others.
+The file must be named `{epub-stem}_relationships.yaml`. Only the relationship file matching the current input EPUB is loaded. Tells the model exactly which Vietnamese pronouns each character uses for themselves and others.
 
 ### Prior Volumes (`data/prior/*.epub`)
 
@@ -195,99 +216,11 @@ To restart from scratch: delete the `data/output/*.checkpoint.json` file manuall
 
 ---
 
-## EPUB Chapter Trimmer — `trim_epub.py`
-
-Use this script to remove unwanted chapters (table of contents pages, newsletters, bonus inserts, etc.) **before** translating, or to clean up an already-translated EPUB.
-
-### List chapters
-
-```bash
-python trim_epub.py my_novel.epub --list
-```
-
-```
- #  Title                              Chars
- 0  Table of Contents                    412
- 1  Prologue                           8,203
- 2  Chapter 1: The Witch                9,841
-...
-17  Newsletter                           302
-```
-
-### Remove by index
-
-```bash
-# Remove specific indices
-python trim_epub.py my_novel.epub --remove 0,17
-
-# Remove a range
-python trim_epub.py my_novel.epub --remove 14-18
-
-# Combined
-python trim_epub.py my_novel.epub --remove 0,14-18 -o cleaned.epub
-```
-
-### Keep a range (remove everything else)
-
-```bash
-# Keep only chapters 1–16
-python trim_epub.py my_novel.epub --keep 1-16
-```
-
-### Interactive mode
-
-Run without `--remove` or `--keep` to get a guided prompt:
-
-```bash
-python trim_epub.py my_novel.epub
-```
-
-The script prints the chapter table, asks which indices to remove, shows a preview, and asks for confirmation before writing.
-
-### Output
-
-- Default output: `<input>_trimmed.epub` next to the original
-- Custom: `python trim_epub.py input.epub -o data/input/clean.epub`
-
----
-
-## Project Structure
-
-```
-vi-ln-translate/
-├── main.py                  # reads configs, translates all EPUBs in data/input/
-├── trim_epub.py             # standalone EPUB chapter remover
-├── config.yaml              # all settings
-├── requirements.txt
-├── .env.example             # template
-├── translator/
-│   ├── config.py            # TranslatorConfig dataclass
-│   ├── checkpoint.py        # progress save/restore
-│   ├── epub_handler.py      # EPUB read/write (ebooklib + BeautifulSoup)
-│   ├── gemini_client.py     # Gemini API wrapper with retry logic
-│   ├── glossary.py          # term consistency
-│   ├── pronoun_system.py    # relationship matrix
-│   ├── prompts.py           # all prompt templates (EN, JP, style analysis, scanner)
-│   ├── scanner.py           # auto-generate draft glossary + relationships
-│   ├── style_reference.py   # style profile extraction and injection
-│   ├── evaluator.py         # second-pass QC
-│   └── translator.py        # core pipeline
-└── data/
-    ├── input/               ← drop source EPUBs here
-    ├── output/              ← translated EPUBs written here
-    ├── glossaries/
-    ├── relationships/
-    ├── prior/
-    └── style_references/    ← drop reference books here
-```
-
----
-
 ## Translation Pipeline
 
 ```
 data/input/*.epub
- └─► (auto_scan) Scan chapters → generate draft glossary + relationships
+ └─► (auto_scan) Scan chapters → generate draft metadata + glossary + relationships
       └─► Load style reference profiles from data/style_references/
            └─► Extract chapters (ebooklib + BeautifulSoup)
                 └─► Load checkpoint (skip already-translated chapters)

@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
-import zipfile
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -128,6 +126,7 @@ class EpubHandler:
         translated_chapters: List[tuple],
         gemini_client: "Optional[GeminiClient]" = None,
         illustration_chapter: bool = False,
+        book_metadata: "Optional[object]" = None,
     ) -> None:
         """
         Build a clean LTR EPUB from scratch using the translated content.
@@ -169,11 +168,19 @@ class EpubHandler:
         out_basename = os.path.splitext(os.path.basename(output_path))[0]
 
         book_title = out_basename
-        for ch, new_title, _ in translated_chapters:
-            if (ch.title.strip() == orig_dc_title.strip()
-                    and new_title and not _JP_CHAR_RE.search(new_title)):
-                book_title = new_title
-                break
+        # 1. Check book_metadata for a user-approved Vietnamese book title
+        if book_metadata:
+            meta_title = book_metadata.get_book_title()
+            if meta_title:
+                book_title = meta_title
+        # 2. Fall back to the translated title of the chapter whose original
+        #    title matches the DC title (e.g. the title-page chapter)
+        if book_title == out_basename and orig_dc_title:
+            for ch, new_title, _ in translated_chapters:
+                if (ch.title.strip() == orig_dc_title.strip()
+                        and new_title and not _JP_CHAR_RE.search(new_title)):
+                    book_title = new_title
+                    break
         if _JP_CHAR_RE.search(book_title):
             book_title = _JP_CHAR_RE.sub("", book_title).strip() or "Untitled"
         if book_title:
@@ -297,6 +304,11 @@ class EpubHandler:
         # Chapters
         epub_chapters: List[epub.EpubHtml] = []
         for ch_idx, (ch, new_title, new_body) in enumerate(translated_chapters, start=1):
+            # Use pre-approved chapter title from metadata if available
+            if book_metadata:
+                meta_ch_title = book_metadata.get_chapter_title(ch.title)
+                if meta_ch_title:
+                    new_title = meta_ch_title
             if not new_body.lstrip().startswith("<h"):
                 new_body = f"<h2>{_escape_xml(new_title)}</h2>\n{new_body}"
 

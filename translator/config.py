@@ -26,6 +26,7 @@ class TranslatorConfig:
     output_dir: str = "data/output"
     glossaries_dir: str = "data/glossaries"
     relationships_dir: str = "data/relationships"
+    metadata_dir: str = "data/metadata"
     prior_volumes_dir: str = "data/prior"
     style_references_dir: str = "data/style_references"
 

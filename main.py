@@ -17,6 +17,7 @@ from typing import List
 
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 
 # Load .env file if present (GEMINI_API_KEY, etc.)
@@ -27,13 +28,20 @@ console = Console()
 _GLOB_DATA = ("*.yaml", "*.yml", "*.json")
 
 
-def _setup_logging(verbose: bool) -> None:
+def _setup_logging(verbose: bool, console: Console) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    handler = RichHandler(
+        console=console,
+        show_path=False,
+        markup=False,
+        log_time_format="[%H:%M:%S]",
+    )
+    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stderr,
+        format="%(message)s",
+        handlers=[handler],
+        force=True,
     )
 
 
@@ -60,13 +68,14 @@ def main() -> None:
     from translator.gemini_client import DailyQuotaExhaustedError
     from translator.gemini_client import GeminiClient
     from translator.glossary import Glossary
+    from translator.metadata import BookMetadata
     from translator.pronoun_system import RelationshipMatrix
     from translator.scanner import BookScanner
     from translator.style_reference import BookStyleAnalyzer, StyleReference
     from translator.translator import Translator
 
     cfg = TranslatorConfig.load()
-    _setup_logging(cfg.verbose)
+    _setup_logging(cfg.verbose, console)
 
     if not cfg.api_key:
         console.print(
@@ -90,6 +99,7 @@ def main() -> None:
 
     glossaries_dir = Path(cfg.glossaries_dir)
     relationships_dir = Path(cfg.relationships_dir)
+    metadata_dir = Path(cfg.metadata_dir)
     prior_dir = Path(cfg.prior_volumes_dir)
 
     style_references_dir = Path(cfg.style_references_dir)
@@ -145,33 +155,9 @@ def main() -> None:
         console.print(
             f"[dim]Style refs  : none found in {style_references_dir}[/dim]")
 
-    # ── Glossary ──────────────────────────────────────────────────────────
-    gloss = Glossary()
-    gloss_files = _find_data_files(glossaries_dir, _GLOB_DATA)
-    for gf in gloss_files:
-        gloss.load(str(gf))
-    if gloss_files:
-        console.print(
-            f"[dim]Glossary   : {len(gloss.entries)} entries from {len(gloss_files)} file(s)[/dim]")
-    else:
-        console.print(
-            f"[dim]Glossary   : none found in {glossaries_dir}[/dim]")
-
-    # ── Relationship matrix ───────────────────────────────────────────────
-    matrix = RelationshipMatrix()
-    rel_files = _find_data_files(relationships_dir, _GLOB_DATA)
-    for rf in rel_files:
-        matrix.load(str(rf))
-    if rel_files:
-        console.print(
-            f"[dim]Relations  : {len(matrix.relationships)} pairs from {len(rel_files)} file(s)[/dim]")
-    else:
-        console.print(
-            f"[dim]Relations  : none found in {relationships_dir}[/dim]")
-
     console.rule()
 
-    # ── Auto-scan: generate draft glossary/relationships if requested ──────
+    # ── Auto-scan: generate draft glossary/relationships/metadata if requested ──
     if cfg.auto_scan:
         client_for_scan = GeminiClient(
             api_key=cfg.api_key, model_name=cfg.model)
@@ -183,22 +169,32 @@ def main() -> None:
             stem = epub_path.stem
             gloss_out = glossaries_dir / f"{stem}_glossary.yaml"
             rel_out = relationships_dir / f"{stem}_relationships.yaml"
+            meta_out = metadata_dir / f"{stem}_metadata.yaml"
 
             need_gloss = not gloss_out.exists()
             need_rel = not rel_out.exists()
+            need_meta = not meta_out.exists()
 
-            if not need_gloss and not need_rel:
+            if not need_gloss and not need_rel and not need_meta:
                 continue  # draft files already exist — skip
 
+            missing = []
+            if need_gloss:
+                missing.append("glossary")
+            if need_rel:
+                missing.append("relationships")
+            if need_meta:
+                missing.append("metadata")
             console.print(
-                f"\n[bold yellow]Auto-scan[/bold yellow]: '{epub_path.name}' has no draft glossary/relationships yet."
+                f"\n[bold yellow]Auto-scan[/bold yellow]: '{epub_path.name}' is missing: {', '.join(missing)}."
             )
             console.print(
                 "  Scanning the book to generate initial drafts… (this uses one API call)\n")
 
             try:
                 with console.status("[bold yellow]Scanning…[/bold yellow]"):
-                    gloss_data, rel_data = scanner.scan_epub(str(epub_path))
+                    gloss_data, rel_data, meta_data = scanner.scan_epub(
+                        str(epub_path))
             except Exception as exc:
                 console.print(f"[bold red]✗  Scan failed:[/bold red] {exc}")
                 console.print(
@@ -212,8 +208,6 @@ def main() -> None:
                     f"  [green]✓[/green] Glossary draft saved → [bold]{gloss_out}[/bold]"
                     f"  ({len(gloss_data.get('entries', []))} entries)"
                 )
-                # Load immediately so these entries are used in translation
-                gloss.load(str(gloss_out))
 
             if need_rel:
                 rel_out.parent.mkdir(parents=True, exist_ok=True)
@@ -222,8 +216,14 @@ def main() -> None:
                     f"  [green]✓[/green] Relationships draft saved → [bold]{rel_out}[/bold]"
                     f"  ({len(rel_data.get('relationships', []))} pairs)"
                 )
-                # Load immediately
-                matrix.load(str(rel_out))
+
+            if need_meta:
+                meta_out.parent.mkdir(parents=True, exist_ok=True)
+                scanner.save_metadata(meta_data, str(meta_out))
+                console.print(
+                    f"  [green]✓[/green] Metadata draft saved → [bold]{meta_out}[/bold]"
+                    f"  (book title + {len(meta_data.get('chapters', []))} chapter title(s))"
+                )
 
             any_scanned = True
 
@@ -248,8 +248,8 @@ def main() -> None:
     client = GeminiClient(api_key=cfg.api_key, model_name=cfg.model)
     translator = Translator(
         gemini_client=client,
-        glossary=gloss,
-        relationship_matrix=matrix,
+        glossary=Glossary(),
+        relationship_matrix=RelationshipMatrix(),
         style_reference=style_ref,
         context_window=cfg.context_window,
         review_threshold=cfg.review_threshold,
@@ -276,9 +276,51 @@ def main() -> None:
         console.print(
             f"\n[bold cyan]▶  {epub_path.name}[/bold cyan]  →  [dim]{output_path.name}[/dim]")
 
-        status_msg = "[bold green]Translating…[/bold green]\n"
+        # Load per-book glossary, relationships, and metadata
+        stem = epub_path.stem
+
+        gloss = Glossary()
+        gloss_file = glossaries_dir / f"{stem}_glossary.yaml"
+        if gloss_file.exists():
+            gloss.load(str(gloss_file))
+            console.print(
+                f"[dim]Glossary   : {len(gloss.entries)} entries ({gloss_file.name})[/dim]")
+        else:
+            console.print(
+                f"[dim]Glossary   : none ('{gloss_file.name}' not found)[/dim]")
+        translator.glossary = gloss
+
+        matrix = RelationshipMatrix()
+        rel_file = relationships_dir / f"{stem}_relationships.yaml"
+        if rel_file.exists():
+            matrix.load(str(rel_file))
+            console.print(
+                f"[dim]Relations  : {len(matrix.relationships)} pairs ({rel_file.name})[/dim]")
+        else:
+            console.print(
+                f"[dim]Relations  : none ('{rel_file.name}' not found)[/dim]")
+        translator.relationships = matrix
+
+        # Load per-book metadata (book title + chapter titles)
+        meta_path = metadata_dir / f"{stem}_metadata.yaml"
+        book_meta = BookMetadata()
+        if meta_path.exists():
+            try:
+                book_meta.load(str(meta_path))
+                console.print(
+                    f"[dim]Metadata   : '{book_meta.get_book_title() or book_meta.book_title_source}'"
+                    f"  ({len(book_meta._chapter_map)} chapter title(s))[/dim]"
+                )
+            except Exception as exc:
+                console.print(
+                    f"[yellow]⚠  Could not load metadata '{meta_path.name}': {exc}[/yellow]")
+        translator.book_metadata = book_meta
+
         try:
-            with console.status(status_msg):
+            with console.status("[bold green]Loading…[/bold green]") as _status:
+                def _status_cb(msg: str, _s: object = _status) -> None:
+                    _s.update(f"[bold green]{msg}[/bold green]")
+
                 results = translator.translate_epub(
                     input_path=str(epub_path),
                     output_path=str(output_path),
@@ -287,6 +329,7 @@ def main() -> None:
                     evaluate=cfg.evaluate and not cfg.batch,
                     batch_mode=cfg.batch,
                     resume=cfg.resume,
+                    status_callback=_status_cb,
                 )
         except DailyQuotaExhaustedError as exc:
             console.print()

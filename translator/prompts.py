@@ -48,6 +48,7 @@ def get_system_instruction(source_language: str = "en") -> str:
 # Translation prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 TRANSLATION_PROMPT_TEMPLATE = """\
 {glossary_section}
 
@@ -213,12 +214,25 @@ Hãy trả lời ĐÚNG theo định dạng được yêu cầu — không thêm
 SCAN_EXTRACTION_PROMPT_TEMPLATE = """\
 Phân tích các đoạn trích Light Novel dưới đây (ngôn ngữ gốc: {source_language_name}).
 
+TÊN SÁCH GỐC: {book_title}
+
+DANH SÁCH TIÊU ĐỀ CHƯƠNG:
+{chapter_titles_text}
+
 {chapters_text}
 
 ════════════════════════════════════════
 YÊU CẦU TRÍCH XUẤT
 ════════════════════════════════════════
-Trả lời ĐÚNG theo 2 phần sau. Không thêm bất kỳ văn bản nào ngoài 2 phần này.
+Trả lời ĐÚNG theo 3 phần sau. Không thêm bất kỳ văn bản nào ngoài 3 phần này.
+
+###METADATA###
+book_title:
+  source: "{book_title}"
+  target: "[bản dịch tiếng Việt của tên sách]"
+chapters:
+  - source: "[tiêu đề chương gốc]"
+    target: "[bản dịch tiếng Việt đề xuất]"
 
 ###GLOSSARY###
 entries:
@@ -237,6 +251,8 @@ relationships:
     notes: "[ghi chú nếu cần, hoặc để trống]"
 
 Lưu ý quan trọng:
+- Phần ###METADATA###: dịch TẤT CẢ tiêu đề chương được liệt kê ở trên, không bỏ sót.
+- Với tên sách và tiêu đề chương, ưu tiên dịch nghĩa tự nhiên; giữ số tập ở cuối (ví dụ "7").
 - Chỉ liệt kê những tên/thuật ngữ xuất hiện RÕ RÀNG trong văn bản.
 - Với tên riêng không có nghĩa, giữ nguyên phiên âm trong target.
 - Với quan hệ nhân vật, chỉ thêm những cặp mà bạn có đủ bằng chứng từ văn bản.

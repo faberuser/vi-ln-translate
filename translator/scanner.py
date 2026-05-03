@@ -51,15 +51,19 @@ class BookScanner:
         self,
         epub_path: str,
         num_chapters: int = _DEFAULT_SCAN_CHAPTERS,
-    ) -> Tuple[dict, dict]:
+    ) -> Tuple[dict, dict, dict]:
         """
-        Analyse ``epub_path`` and return ``(glossary_data, relationships_data)``.
+        Analyse ``epub_path`` and return
+        ``(glossary_data, relationships_data, metadata_data)``.
 
-        Both dicts are ready to be passed to :meth:`save_glossary` /
-        :meth:`save_relationships`.
+        All three dicts are ready to be passed to :meth:`save_glossary`,
+        :meth:`save_relationships`, and :meth:`save_metadata`.
         """
         handler = EpubHandler()
         chapters = handler.load(epub_path)
+
+        book_title = (handler.book.title if handler.book else "") or ""
+        chapter_titles = [ch.title for ch in chapters if ch.title]
 
         sampled = _sample_chapters(chapters, num_chapters)
         logger.info(
@@ -68,10 +72,13 @@ class BookScanner:
         )
 
         chapters_text = _format_chapters_for_scan(sampled)
+        chapter_titles_text = "\n".join(f"  - {t}" for t in chapter_titles)
         lang_name = _language_display_name(self.source_language)
 
         prompt = SCAN_EXTRACTION_PROMPT_TEMPLATE.format(
             source_language_name=lang_name,
+            book_title=book_title,
+            chapter_titles_text=chapter_titles_text,
             chapters_text=chapters_text,
         )
 
@@ -83,13 +90,17 @@ class BookScanner:
             max_output_tokens=8192,
         )
 
-        glossary_data, relationships_data = _parse_scan_response(response)
+        glossary_data, relationships_data, metadata_data = _parse_scan_response(
+            response, book_title=book_title, chapter_titles=chapter_titles
+        )
+
         logger.info(
-            "Scanner: extracted %d glossary entries, %d relationships",
+            "Scanner: extracted %d glossary entries, %d relationships, %d chapter title(s)",
             len(glossary_data.get("entries", [])),
             len(relationships_data.get("relationships", [])),
+            len(metadata_data.get("chapters", [])),
         )
-        return glossary_data, relationships_data
+        return glossary_data, relationships_data, metadata_data
 
     def save_glossary(self, data: dict, filepath: str) -> None:
         """Write glossary data to a YAML file with a human-friendly header comment."""
@@ -103,6 +114,20 @@ class BookScanner:
             "#   target: Vietnamese translation\n"
             "#   context: type (nhân vật / địa danh / kỹ năng / chức vị / ...)\n"
             "#   notes: optional notes\n\n"
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(header)
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+
+    def save_metadata(self, data: dict, filepath: str) -> None:
+        """Write metadata (book title + chapter titles) to a YAML file."""
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        header = (
+            "# Auto-generated book metadata — PLEASE REVIEW AND EDIT before translating.\n"
+            "# book_title.target  → used as the EPUB title in the translated output.\n"
+            "# chapters[].target  → used as the chapter title in the translated output.\n"
+            "# Edit the 'target' fields with the correct Vietnamese translations.\n\n"
         )
         with open(path, "w", encoding="utf-8") as f:
             f.write(header)
@@ -156,13 +181,48 @@ def _format_chapters_for_scan(chapters: List[Chapter]) -> str:
     return "\n\n".join(parts)
 
 
-def _parse_scan_response(response: str) -> Tuple[dict, dict]:
+def _parse_scan_response(
+    response: str,
+    book_title: str = "",
+    chapter_titles: List[str] = (),
+) -> Tuple[dict, dict, dict]:
     """
-    Parse the ###GLOSSARY### and ###RELATIONSHIPS### sections from the
-    Gemini response.  Returns safe defaults if parsing fails.
+    Parse the ###METADATA###, ###GLOSSARY###, and ###RELATIONSHIPS### sections
+    from the Gemini response.  Returns safe defaults if parsing fails.
     """
     glossary_data: dict = {"entries": []}
     relationships_data: dict = {"relationships": []}
+    metadata_data: dict = {"book_title": {
+        "source": book_title, "target": ""}, "chapters": []}
+
+    # ── Metadata section ──────────────────────────────────────────────
+    meta_match = re.search(
+        r"###METADATA###\s*\n(.*?)(?=###GLOSSARY###|###RELATIONSHIPS###|$)",
+        response,
+        re.DOTALL,
+    )
+    if meta_match:
+        meta_yaml = _strip_comments(meta_match.group(1).strip())
+        try:
+            parsed = yaml.safe_load(meta_yaml)
+            if isinstance(parsed, dict):
+                if "book_title" in parsed and isinstance(parsed["book_title"], dict):
+                    metadata_data["book_title"] = parsed["book_title"]
+                if "chapters" in parsed and isinstance(parsed["chapters"], list):
+                    metadata_data["chapters"] = parsed["chapters"]
+            else:
+                logger.warning(
+                    "Scanner: metadata YAML parsed but has unexpected shape")
+        except yaml.YAMLError as exc:
+            logger.warning("Scanner: failed to parse metadata YAML: %s", exc)
+
+    # Fill in any chapter titles that Gemini missed
+    translated_sources = {e.get("source", "")
+                          for e in metadata_data["chapters"]}
+    for title in chapter_titles:
+        if title not in translated_sources:
+            metadata_data["chapters"].append(
+                {"source": title, "target": title})
 
     # ── Glossary section ──────────────────────────────────────────────
     gloss_match = re.search(
@@ -177,7 +237,8 @@ def _parse_scan_response(response: str) -> Tuple[dict, dict]:
             if isinstance(parsed, dict) and "entries" in parsed and isinstance(parsed["entries"], list):
                 glossary_data = parsed
             else:
-                logger.warning("Scanner: glossary YAML parsed but has unexpected shape")
+                logger.warning(
+                    "Scanner: glossary YAML parsed but has unexpected shape")
         except yaml.YAMLError as exc:
             logger.warning("Scanner: failed to parse glossary YAML: %s", exc)
 
@@ -194,11 +255,13 @@ def _parse_scan_response(response: str) -> Tuple[dict, dict]:
             if isinstance(parsed, dict) and "relationships" in parsed and isinstance(parsed["relationships"], list):
                 relationships_data = parsed
             else:
-                logger.warning("Scanner: relationships YAML parsed but has unexpected shape")
+                logger.warning(
+                    "Scanner: relationships YAML parsed but has unexpected shape")
         except yaml.YAMLError as exc:
-            logger.warning("Scanner: failed to parse relationships YAML: %s", exc)
+            logger.warning(
+                "Scanner: failed to parse relationships YAML: %s", exc)
 
-    return glossary_data, relationships_data
+    return glossary_data, relationships_data, metadata_data
 
 
 def _strip_comments(text: str) -> str:

@@ -3,13 +3,14 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from .checkpoint import CheckpointManager, restore_results
 from .epub_handler import Chapter, EpubHandler
 from .evaluator import Evaluator
 from .gemini_client import GeminiClient, DailyQuotaExhaustedError
 from .glossary import Glossary
+from .metadata import BookMetadata
 from .pronoun_system import RelationshipMatrix
 from .prompts import get_system_instruction, TRANSLATION_PROMPT_TEMPLATE, BATCH_TRANSLATION_PROMPT_TEMPLATE, BATCH_CHAPTER_ENTRY
 from .style_reference import StyleReference
@@ -57,6 +58,8 @@ class Translator:
         self.batch_chunk_size = max(1, batch_chunk_size)
         self.source_language = source_language
         self.illustration_chapter = False  # set after init via config
+        # set after init via main.py
+        self.book_metadata: Optional[BookMetadata] = None
         self._system_instruction = get_system_instruction(source_language)
         self.evaluator = Evaluator(gemini_client)
         # Seed chapters from previously translated volumes (loaded via load_prior_volumes)
@@ -265,6 +268,7 @@ class Translator:
         evaluate: bool = True,
         batch_mode: bool = False,
         resume: bool = True,
+        status_callback: Optional[Callable[[str], None]] = None,
     ) -> List[TranslationResult]:
         """
         Translate an entire EPUB and write the output file.
@@ -275,7 +279,10 @@ class Translator:
 
         Returns a list of TranslationResult (one per translated chapter).
         """
+        _cb = status_callback if status_callback is not None else lambda _: None
+
         handler = EpubHandler()
+        _cb("Loading EPUB…")
         all_chapters = handler.load(input_path)
 
         end = end_chapter if end_chapter is not None else len(all_chapters)
@@ -300,6 +307,12 @@ class Translator:
                 "Resuming: %d/%d chapter(s) already translated, %d remaining.",
                 len(already_done), len(chapters_to_translate), len(pending),
             )
+            _cb(
+                f"Resuming — {len(already_done)}/{len(chapters_to_translate)} done, "
+                f"{len(pending)} remaining"
+            )
+        else:
+            _cb(f"Loaded {len(chapters_to_translate)} chapters — starting translation")
 
         # Seed with prior-volume chapters so context window reaches across volumes
         seed_results: List[TranslationResult] = list(self._seed_results)
@@ -317,12 +330,18 @@ class Translator:
             for chunk_idx in range(num_chunks):
                 chunk = pending[chunk_idx *
                                 chunk_size:(chunk_idx + 1) * chunk_size]
+                ch_start = chunk_idx * chunk_size + 1
+                ch_end = chunk_idx * chunk_size + len(chunk)
                 logger.info(
                     "  Chunk %d/%d: chapters %d–%d (%s … %s)",
                     chunk_idx + 1, num_chunks,
-                    chunk_idx * chunk_size + 1, chunk_idx *
-                    chunk_size + len(chunk),
+                    ch_start, ch_end,
                     chunk[0].title, chunk[-1].title,
+                )
+                _cb(
+                    f"Chunk {chunk_idx + 1}/{num_chunks} "
+                    f"· chapters {ch_start}–{ch_end} "
+                    f"· awaiting Gemini\u2026"
                 )
                 try:
                     chunk_results = self.translate_chapters_batch(
@@ -343,10 +362,12 @@ class Translator:
                         "  Retrying %d chapter(s) that failed to parse from batch…",
                         len(failed),
                     )
+                    _cb(f"Retrying {len(failed)} chapter(s) that failed to parse…")
                     retry_ctx = seed_results + chapter_results
                     for fail_result in failed:
                         logger.info("  Retrying: %s",
                                     fail_result.chapter.title)
+                        _cb(f"Retrying: {fail_result.chapter.title}")
                         retried = self.translate_chapter(
                             fail_result.chapter, retry_ctx)
                         retry_ctx = retry_ctx + [retried]
@@ -368,11 +389,13 @@ class Translator:
         else:
             chapter_results = list(already_done)
             for idx, chapter in enumerate(pending, start=1):
+                overall = len(already_done) + idx
+                total_ch = len(chapters_to_translate)
                 logger.info(
                     "[%d/%d] %s",
-                    len(already_done) +
-                    idx, len(chapters_to_translate), chapter.title,
+                    overall, total_ch, chapter.title,
                 )
+                _cb(f"[{overall}/{total_ch}] Translating: {chapter.title}")
 
                 result = self.translate_chapter(
                     chapter, seed_results + chapter_results)
@@ -406,12 +429,14 @@ class Translator:
         chapter_results.sort(key=lambda r: order.get(r.chapter.id, 99999))
 
         # Build translated chapter list and save EPUB
+        _cb("Saving translated EPUB…")
         translated = [
             (r.chapter, r.translated_title, _text_to_html(r.translated_content))
             for r in chapter_results
         ]
         handler.save(output_path, translated,
-                     illustration_chapter=self.illustration_chapter)
+                     illustration_chapter=self.illustration_chapter,
+                     book_metadata=self.book_metadata)
 
         # Clean up checkpoint on success
         ckpt.delete()
